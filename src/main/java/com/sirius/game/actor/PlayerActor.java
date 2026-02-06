@@ -5,12 +5,13 @@ import akka.actor.typed.javadsl.AbstractBehavior;
 import akka.actor.typed.javadsl.ActorContext;
 import akka.actor.typed.javadsl.Behaviors;
 import akka.actor.typed.javadsl.Receive;
-import com.sirius.game.common.ProtobufBinaryUtils;
-import com.sirius.game.proto.Message;
-import com.sirius.game.proto.SendMessageRequest;
+import com.google.protobuf.InvalidProtocolBufferException;
+import com.sirius.game.proto.*;
 import io.vertx.core.buffer.Buffer;
 import io.vertx.core.http.ServerWebSocket;
 import lombok.extern.slf4j.Slf4j;
+
+import java.util.UUID;
 
 @Slf4j
 public class PlayerActor extends AbstractBehavior<Object> {
@@ -32,45 +33,59 @@ public class PlayerActor extends AbstractBehavior<Object> {
     @Override
     public Receive<Object> createReceive() {
         return newReceiveBuilder()
-                .onMessage(Message.class, this::onMessage)
+                .onMessage(byte[].class, this::onMessage)
                 .build();
     }
 
-    private Behavior<Object> onMessage(Message message) {
+    private Behavior<Object> onMessage(byte[] data) throws InvalidProtocolBufferException {
+        GameMessage message = GameMessage.parseFrom(data);
         log.info("Player {} received Message: type={}", playerId, message.getType());
 
         // 根据消息类型处理消息
         switch (message.getType()) {
-            case SEND_REQUEST:
-                return handleSendMessageRequest(message.getSendRequest());
+            case CS_LOGIN:
+                return handleLoginRequest(message.getCsLogin());
+            case CS_SEND_MESSAGE:
+                return handleSendMessageRequest(message.getCsSendMessage());
             default:
                 log.warn("Player {} received unknown message type: {}", playerId, message.getType());
                 return this;
         }
     }
 
-    private Behavior<Object> handleSendMessageRequest(SendMessageRequest request) {
-        log.info("Player {} handling send message request: from={}, to={}, content={}",
-                playerId, request.getFrom(), request.getTo(), request.getContent());
+    private Behavior<Object> handleLoginRequest(CSLogin csLogin) {
+        SCLoginResult scLoginResult = SCLoginResult.newBuilder()
+                .setSuccess(true)
+                .setMessage("")
+                .setUserId("")
+                .setSessionToken("")
+                .setTimestamp(System.currentTimeMillis())
+                .build();
 
-        // 创建接收消息通知
-        Message notification = ProtobufBinaryUtils.createReceiveMessageNotification(
-                request.getFrom(), request.getTo(), request.getContent(), request.getFrom());
+        GameMessage gameMessage = GameMessage.newBuilder()
+                .setType(MessageType.SC_LOGIN_RESULT)
+                .setScLoginResult(scLoginResult)
+                .build();
 
-        // 向WebSocket发送通知（二进制格式）
-        try {
-            // 如果消息是发给自己的，直接发送通知
-            if (playerId.equals(request.getTo())) {
-                byte[] notificationBytes = ProtobufBinaryUtils.serializeMessage(notification);
-                webSocket.writeBinaryMessage(Buffer.buffer(notificationBytes));
-                log.info("Player {} sent notification to self", playerId);
-            } else {
-                log.info("Player {} received message for different recipient: {}", playerId, request.getTo());
-            }
-        } catch (Exception e) {
-            log.error("Failed to send notification to WebSocket", e);
-        }
+        webSocket.writeBinaryMessage(Buffer.buffer(gameMessage.toByteArray()));
+        return this;
+    }
 
+    private Behavior<Object> handleSendMessageRequest(CSSendMessage csSendMessage) {
+        SCReceiveMessage scReceiveMessage = SCReceiveMessage.newBuilder()
+                .setFrom(csSendMessage.getFrom())
+                .setTo(csSendMessage.getTo())
+                .setContent(csSendMessage.getContent())
+                .setTimestamp(System.currentTimeMillis())
+                .setMessageId(UUID.randomUUID().toString())
+                .build();
+
+        GameMessage gameMessage = GameMessage.newBuilder()
+                .setType(MessageType.SC_RECEIVE_MESSAGE)
+                .setScReceiveMessage(scReceiveMessage)
+                .build();
+
+        webSocket.writeBinaryMessage(Buffer.buffer(gameMessage.toByteArray()));
         return this;
     }
 }

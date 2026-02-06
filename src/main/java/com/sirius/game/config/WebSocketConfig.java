@@ -1,12 +1,11 @@
 package com.sirius.game.config;
 
+import akka.actor.PoisonPill;
 import akka.actor.typed.ActorRef;
 import akka.actor.typed.ActorSystem;
 import akka.actor.typed.Props;
-import com.google.protobuf.InvalidProtocolBufferException;
-import com.sirius.game.actor.RootActor;
 import com.sirius.game.actor.PlayerActor;
-import com.sirius.game.proto.Message;
+import com.sirius.game.actor.RootActor;
 import io.vertx.core.Vertx;
 import io.vertx.core.http.HttpServer;
 import jakarta.annotation.PostConstruct;
@@ -61,19 +60,13 @@ public class WebSocketConfig {
                         actorRef = actorSystem.systemActorOf(PlayerActor.create(playerId, webSocket), "player-" + playerId, Props.empty());
                         players.put(playerId, actorRef);
                     }
-
-                    // 处理二进制消息
                     webSocket.handler(buffer -> {
-                        try {
-                            Message message = Message.parseFrom(buffer.getBytes());
-                            actorRef.tell(message);
-                        } catch (InvalidProtocolBufferException e) {
-                            throw new RuntimeException(e);
-                        }
+                        actorRef.tell(buffer.getBytes());
                     });
 
                     // 处理关闭
                     webSocket.closeHandler(v -> {
+                        actorRef.tell(PoisonPill.getInstance());
                         log.info("WebSocket closed: {}", playerId);
                     });
                 })

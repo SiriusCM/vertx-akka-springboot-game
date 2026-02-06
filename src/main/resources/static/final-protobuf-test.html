@@ -7,7 +7,7 @@
     <style>
         body {
             font-family: Arial, sans-serif;
-            max-width: 600px;
+            max-width: 800px;
             margin: 0 auto;
             padding: 20px;
         }
@@ -18,7 +18,7 @@
             margin-bottom: 20px;
         }
         .messages {
-            height: 200px;
+            height: 300px;
             overflow-y: scroll;
             border: 1px solid #eee;
             padding: 10px;
@@ -72,14 +72,29 @@
             background-color: #f2dede;
             color: #a94442;
         }
+        .logged-in {
+            background-color: #d9edf7;
+            color: #31708f;
+        }
         .message-type {
             font-weight: bold;
             color: #007bff;
         }
+        .login-section {
+            background-color: #f8f9fa;
+        }
+        .sms-section {
+            background-color: #fff;
+        }
+        .hidden {
+            display: none;
+        }
     </style>
+    <!-- 引入protobuf.js库 -->
+    <script src="https://cdn.jsdelivr.net/npm/protobufjs@7.2.5/dist/protobuf.min.js"></script>
 </head>
 <body>
-    <h1>Final Protobuf SMS Test</h1>
+    <h1>Final Protobuf Test</h1>
     
     <div class="status disconnected" id="status">Disconnected</div>
     
@@ -89,7 +104,17 @@
         <button id="disconnectBtn" disabled>Disconnect</button>
     </div>
     
-    <div class="container">
+    <!-- 登录部分 -->
+    <div class="container login-section" id="loginSection">
+        <h2>Login</h2>
+        <input type="text" id="username" placeholder="Username" value="player1">
+        <input type="password" id="password" placeholder="Password" value="password123">
+        <button id="loginBtn" disabled>Login</button>
+        <button id="logoutBtn" disabled>Logout</button>
+    </div>
+    
+    <!-- SMS部分，初始隐藏，登录后显示 -->
+    <div class="container sms-section hidden" id="smsSection">
         <h2>Send SMS</h2>
         <input type="text" id="from" placeholder="From (Player ID)" value="player1">
         <input type="text" id="to" placeholder="To (Player ID)" value="player2">
@@ -104,64 +129,155 @@
     </div>
 
     <script>
-        // 模拟protobuf消息结构
-        const Message = {
-            Type: {
-                UNKNOWN: 0,
-                SEND_REQUEST: 1,
-                RECEIVE_NOTIFICATION: 2
-            },
-            
-            createSendRequest: function(from, to, content) {
-                return {
-                    type: this.Type.SEND_REQUEST,
-                    payload: {
-                        from: from,
-                        to: to,
-                        content: content,
-                        timestamp: Date.now()
-                    }
-                };
-            },
-            
-            createReceiveNotification: function(from, to, content, originalMessageId) {
-                return {
-                    type: this.Type.RECEIVE_NOTIFICATION,
-                    payload: {
-                        from: from,
-                        to: to,
-                        content: content,
-                        timestamp: Date.now(),
-                        message_id: 'notif-' + Date.now(),
-                        original_message_id: originalMessageId
-                    }
-                };
-            },
-            
-            // 序列化为二进制格式（这里用JSON字符串模拟）
-            serializeBinary: function(obj) {
-                // 在实际应用中，这里应该使用protobuf.js库
-                return new TextEncoder().encode(JSON.stringify(obj));
-            },
-            
-            // 从二进制格式反序列化
-            deserializeBinary: function(bytes) {
-                // 在实际应用中，这里应该使用protobuf.js库
-                try {
-                    return JSON.parse(new TextDecoder().decode(bytes));
-                } catch (e) {
-                    console.error('Failed to parse message:', e);
-                    return null;
+        // protobuf消息定义
+        let GameMessage, MessageType, CSSendMessage, SCReceiveMessage, CSLogin, SCLoginResult;
+        
+        // 初始化protobuf
+        async function initProtobuf() {
+            // 定义.proto文件内容 - 更新以匹配实际proto文件
+            const protoDefinition = `
+                syntax = "proto3";
+                
+                package com.sirius.game.proto;
+                
+                enum MessageType {
+                    UNKNOWN = 0;
+                    CS_LOGIN = 1001;
+                    SC_LOGIN_RESULT = 1002;
+                    CS_SEND_MESSAGE = 2001;
+                    SC_RECEIVE_MESSAGE = 2002;
                 }
+                
+                message GameMessage {
+                    MessageType type = 1;
+                    oneof payload {
+                        CSLogin cs_login = 1001;
+                        SCLoginResult sc_login_result = 1002;
+                        CSSendMessage cs_send_message = 2001;
+                        SCReceiveMessage sc_receive_message = 2002;
+                    }
+                }
+                
+                message CSLogin {
+                    string username = 1;
+                    string password = 2;
+                    int64 timestamp = 3;
+                }
+                
+                message SCLoginResult {
+                    bool success = 1;
+                    string message = 2;
+                    string user_id = 3;
+                    string session_token = 4;
+                    int64 timestamp = 5;
+                }
+                
+                message CSSendMessage {
+                    string from = 1;
+                    string to = 2;
+                    string content = 3;
+                    int64 timestamp = 4;
+                }
+                
+                message SCReceiveMessage {
+                    string from = 1;
+                    string to = 2;
+                    string content = 3;
+                    int64 timestamp = 4;
+                    string message_id = 5;
+                }
+            `;
+            
+            try {
+                const root = protobuf.parse(protoDefinition).root;
+                GameMessage = root.lookupType("com.sirius.game.proto.GameMessage");
+                MessageType = root.lookupEnum("com.sirius.game.proto.MessageType");
+                CSSendMessage = root.lookupType("com.sirius.game.proto.CSSendMessage");
+                SCReceiveMessage = root.lookupType("com.sirius.game.proto.SCReceiveMessage");
+                CSLogin = root.lookupType("com.sirius.game.proto.CSLogin");
+                SCLoginResult = root.lookupType("com.sirius.game.proto.SCLoginResult");
+                
+                addMessage("Protobuf initialized successfully", "received");
+            } catch (error) {
+                console.error("Failed to initialize protobuf:", error);
+                addMessage("Failed to initialize protobuf: " + error.message, "received");
             }
-        };
+        }
 
         let ws = null;
+        let isLoggedIn = false;
+        let userId = null;
+        let sessionToken = null;
+        
         const statusEl = document.getElementById('status');
         const connectBtn = document.getElementById('connectBtn');
         const disconnectBtn = document.getElementById('disconnectBtn');
+        const loginBtn = document.getElementById('loginBtn');
+        const logoutBtn = document.getElementById('logoutBtn');
         const sendBtn = document.getElementById('sendBtn');
         const messagesEl = document.getElementById('messages');
+        const loginSection = document.getElementById('loginSection');
+        const smsSection = document.getElementById('smsSection');
+        
+        // 在页面加载时初始化protobuf
+        document.addEventListener('DOMContentLoaded', initProtobuf);
+        
+        // 创建CSLogin消息
+        function createCSLogin(username, password) {
+            const payload = {
+                type: MessageType.values.CS_LOGIN,
+                csLogin: {
+                    username: username,
+                    password: password,
+                    timestamp: Date.now()
+                }
+            };
+            
+            return payload;
+        }
+        
+        // 创建CSSendMessage消息
+        function createCSSendMessage(from, to, content) {
+            const payload = {
+                type: MessageType.values.CS_SEND_MESSAGE,
+                csSendMessage: {
+                    from: from,
+                    to: to,
+                    content: content,
+                    timestamp: Date.now()
+                }
+            };
+            
+            return payload;
+        }
+        
+        // 序列化GameMessage
+        function serializeGameMessage(message) {
+            try {
+                const errMsg = GameMessage.verify(message);
+                if (errMsg) {
+                    throw new Error(errMsg);
+                }
+                
+                const gameMessage = GameMessage.create(message);
+                const buffer = GameMessage.encode(gameMessage).finish();
+                return buffer;
+            } catch (error) {
+                console.error("Serialization error:", error);
+                throw error;
+            }
+        }
+        
+        // 反序列化GameMessage
+        function deserializeGameMessage(buffer) {
+            try {
+                const gameMessage = GameMessage.decode(new Uint8Array(buffer));
+                return GameMessage.toObject(gameMessage);
+            } catch (error) {
+                console.error("Deserialization error:", error);
+                throw error;
+            }
+        }
         
         // 连接WebSocket
         connectBtn.addEventListener('click', () => {
@@ -175,7 +291,7 @@
                 statusEl.className = 'status connected';
                 connectBtn.disabled = true;
                 disconnectBtn.disabled = false;
-                sendBtn.disabled = false;
+                loginBtn.disabled = false;
             };
             
             ws.onmessage = (event) => {
@@ -184,12 +300,13 @@
                 // 处理二进制数据
                 const bytes = new Uint8Array(event.data);
                 
-                // 尝试解析为Message
-                const message = Message.deserializeBinary(bytes);
-                if (message) {
+                // 尝试解析为GameMessage
+                try {
+                    const message = deserializeGameMessage(bytes);
                     handleMessage(message);
-                } else {
-                    addMessage(`Received binary data (${bytes.length} bytes)`, 'received');
+                } catch (error) {
+                    console.error('Failed to parse message:', error);
+                    addMessage(`Failed to parse message: ${error.message}`, 'received');
                 }
             };
             
@@ -199,7 +316,15 @@
                 statusEl.className = 'status disconnected';
                 connectBtn.disabled = false;
                 disconnectBtn.disabled = true;
+                loginBtn.disabled = true;
+                logoutBtn.disabled = true;
                 sendBtn.disabled = true;
+                
+                // 重置登录状态
+                isLoggedIn = false;
+                userId = null;
+                sessionToken = null;
+                updateUIState();
             };
             
             ws.onerror = (error) => {
@@ -215,26 +340,70 @@
             }
         });
         
-        // 处理接收到的Message
-        function handleMessage(message) {
-            let typeName = '';
-            switch (message.type) {
-                case Message.Type.SEND_REQUEST:
-                    typeName = 'SEND_REQUEST';
-                    break;
-                case Message.Type.RECEIVE_NOTIFICATION:
-                    typeName = 'RECEIVE_NOTIFICATION';
-                    break;
-                default:
-                    typeName = 'UNKNOWN';
+        // 登录
+        loginBtn.addEventListener('click', () => {
+            if (!ws || ws.readyState !== WebSocket.OPEN) {
+                alert('Please connect first');
+                return;
             }
             
-            if (message.payload.type === 'send_request') {
-                addMessage(`<span class="message-type">[${typeName}]</span> Send Request from ${message.payload.from} to ${message.payload.to}: ${message.payload.content}`, 'received');
-            } else if (message.payload.type === 'receive_notification') {
-                addMessage(`<span class="message-type">[${typeName}]</span> Receive Notification from ${message.payload.from} to ${message.payload.to}: ${message.payload.content}`, 'received');
-            } else {
-                addMessage(`<span class="message-type">[${typeName}]</span> Unknown message type from ${message.payload.from} to ${message.payload.to}`, 'received');
+            const username = document.getElementById('username').value || 'player1';
+            const password = document.getElementById('password').value || 'password123';
+            
+            try {
+                // 创建CSLogin消息
+                const loginRequest = createCSLogin(username, password);
+                
+                // 序列化为二进制格式
+                const binaryData = serializeGameMessage(loginRequest);
+                
+                // 发送二进制消息
+                ws.send(binaryData);
+                
+                // 显示已发送的消息
+                addMessage(`<span class="message-type">[CS_LOGIN]</span> Login request sent for user: ${username}`, 'sent');
+            } catch (error) {
+                console.error("Failed to send login request:", error);
+                addMessage(`Failed to send login request: ${error.message}`, 'received');
+            }
+        });
+        
+        // 登出
+        logoutBtn.addEventListener('click', () => {
+            isLoggedIn = false;
+            userId = null;
+            sessionToken = null;
+            updateUIState();
+            addMessage(`<span class="message-type">[LOGOUT]</span> User logged out`, 'received');
+        });
+        
+        // 处理接收到的GameMessage
+        function handleMessage(message) {
+            const typeName = Object.keys(MessageType.values).find(key => MessageType.values[key] === message.type) || 'UNKNOWN';
+            
+            switch (message.type) {
+                case MessageType.values.SC_RECEIVE_MESSAGE:
+                    if (message.scReceiveMessage) {
+                        const msg = message.scReceiveMessage;
+                        addMessage(`<span class="message-type">[${typeName}]</span> Message from ${msg.from} to ${msg.to}: ${msg.content}`, 'received');
+                    }
+                    break;
+                case MessageType.values.SC_LOGIN_RESULT:
+                    if (message.scLoginResult) {
+                        const result = message.scLoginResult;
+                        if (result.success) {
+                            isLoggedIn = true;
+                            userId = result.userId;
+                            sessionToken = result.sessionToken;
+                            addMessage(`<span class="message-type">[${typeName}]</span> Login successful! User ID: ${result.userId}`, 'received');
+                        } else {
+                            addMessage(`<span class="message-type">[${typeName}]</span> Login failed: ${result.message}`, 'received');
+                        }
+                        updateUIState();
+                    }
+                    break;
+                default:
+                    addMessage(`<span class="message-type">[${typeName}]</span> Unknown message type`, 'received');
             }
         }
         
@@ -245,7 +414,12 @@
                 return;
             }
             
-            const from = document.getElementById('from').value || 'player1';
+            if (!isLoggedIn) {
+                alert('Please login first');
+                return;
+            }
+            
+            const from = document.getElementById('from').value || userId || 'player1';
             const to = document.getElementById('to').value || 'player2';
             const content = document.getElementById('message').value;
             
@@ -254,21 +428,45 @@
                 return;
             }
             
-            // 创建SendMessageRequest
-            const sendRequest = Message.createSendRequest(from, to, content);
-            
-            // 序列化为二进制格式
-            const binaryData = Message.serializeBinary(sendRequest);
-            
-            // 发送二进制消息
-            ws.send(binaryData);
-            
-            // 显示已发送的消息
-            addMessage(`<span class="message-type">[SEND_REQUEST]</span> Sent to ${to}: ${content}`, 'sent');
-            
-            // 清空输入框
-            document.getElementById('message').value = '';
+            try {
+                // 创建CSSendMessage消息
+                const sendMessage = createCSSendMessage(from, to, content);
+                
+                // 序列化为二进制格式
+                const binaryData = serializeGameMessage(sendMessage);
+                
+                // 发送二进制消息
+                ws.send(binaryData);
+                
+                // 显示已发送的消息
+                addMessage(`<span class="message-type">[CS_SEND_MESSAGE]</span> Sent to ${to}: ${content}`, 'sent');
+                
+                // 清空输入框
+                document.getElementById('message').value = '';
+            } catch (error) {
+                console.error("Failed to send message:", error);
+                addMessage(`Failed to send message: ${error.message}`, 'received');
+            }
         });
+        
+        // 更新UI状态
+        function updateUIState() {
+            if (isLoggedIn) {
+                loginSection.classList.add('hidden');
+                smsSection.classList.remove('hidden');
+                sendBtn.disabled = false;
+                logoutBtn.disabled = false;
+                loginBtn.disabled = true;
+                statusEl.textContent = `Connected - Logged in as ${userId}`;
+                statusEl.className = 'status logged-in';
+            } else {
+                loginSection.classList.remove('hidden');
+                smsSection.classList.add('hidden');
+                sendBtn.disabled = true;
+                logoutBtn.disabled = true;
+                loginBtn.disabled = false;
+            }
+        }
         
         // 添加消息到显示区域
         function addMessage(text, type) {
@@ -289,6 +487,14 @@
             if (e.key === 'Enter' && !e.shiftKey) {
                 e.preventDefault();
                 sendBtn.click();
+            }
+        });
+        
+        // 允许按Enter键登录
+        document.getElementById('password').addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') {
+                e.preventDefault();
+                loginBtn.click();
             }
         });
     </script>

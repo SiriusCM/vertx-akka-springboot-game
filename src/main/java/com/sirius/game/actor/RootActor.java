@@ -19,7 +19,7 @@ public class RootActor extends AbstractBehavior<Object> {
         return Behaviors.setup(context -> new RootActor(context, players));
     }
 
-    private RootActor(ActorContext<Object> context,Map<String, ActorRef<Object>> players) {
+    private RootActor(ActorContext<Object> context, Map<String, ActorRef<Object>> players) {
         super(context);
         this.players = players;
         log.info("RootActor created");

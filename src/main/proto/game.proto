@@ -1,0 +1,65 @@
+syntax = "proto3";
+
+package com.sirius.game.proto;
+
+option java_multiple_files = true;
+option java_package = "com.sirius.game.proto";
+option java_outer_classname = "GameProtos";
+
+// 消息类型枚举
+enum MessageType {
+  UNKNOWN = 0;
+
+  CS_LOGIN = 1001;
+  SC_LOGIN_RESULT = 1002;
+
+  CS_SEND_MESSAGE = 2001;
+  SC_RECEIVE_MESSAGE = 2002;
+
+}
+
+// 统一消息类型
+message GameMessage {
+  MessageType type = 1;  // 消息类型标识符
+  // 使用oneof定义不同的消息内容，便于未来扩展
+  oneof payload {
+    CSLogin cs_login = 1001;
+    SCLoginResult sc_login_result = 1002;
+
+    CSSendMessage cs_send_message = 2001;
+    SCReceiveMessage sc_receive_message = 2002;
+  }
+}
+
+// 登录请求（客户端到服务端）
+message CSLogin {
+  string username = 1;  // 用户名
+  string password = 2;  // 密码
+  int64 timestamp = 3;  // 时间戳
+}
+
+// 登录结果响应（服务端到客户端）
+message SCLoginResult {
+  bool success = 1;           // 登录是否成功
+  string message = 2;         // 结果消息（如错误信息）
+  string user_id = 3;         // 用户ID（登录成功时返回）
+  string session_token = 4;   // 会话令牌（登录成功时返回）
+  int64 timestamp = 5;        // 时间戳
+}
+
+// 发送短信请求（客户端到服务端）
+message CSSendMessage {
+  string from = 1;  // 发送者ID
+  string to = 2;    // 接收者ID
+  string content = 3;  // 消息内容
+  int64 timestamp = 4;   // 时间戳
+}
+
+// 收到短信通知（服务端到客户端）
+message SCReceiveMessage {
+  string from = 1;  // 发送者ID
+  string to = 2;    // 接收者ID
+  string content = 3;  // 消息内容
+  int64 timestamp = 4;   // 时间戳
+  string message_id = 5; // 消息ID
+}
