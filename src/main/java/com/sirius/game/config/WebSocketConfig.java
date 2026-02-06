@@ -3,9 +3,10 @@ package com.sirius.game.config;
 import akka.actor.typed.ActorRef;
 import akka.actor.typed.ActorSystem;
 import akka.actor.typed.Props;
+import com.google.protobuf.InvalidProtocolBufferException;
 import com.sirius.game.actor.RootActor;
 import com.sirius.game.actor.PlayerActor;
-import com.sirius.game.proto.PlayerMessage;
+import com.sirius.game.proto.Message;
 import io.vertx.core.Vertx;
 import io.vertx.core.http.HttpServer;
 import jakarta.annotation.PostConstruct;
@@ -61,10 +62,14 @@ public class WebSocketConfig {
                         players.put(playerId, actorRef);
                     }
 
-                    // 处理消息
+                    // 处理二进制消息
                     webSocket.handler(buffer -> {
-                        String message = buffer.toString();
-                        actorRef.tell(new PlayerMessage(playerId, message));
+                        try {
+                            Message message = Message.parseFrom(buffer.getBytes());
+                            actorRef.tell(message);
+                        } catch (InvalidProtocolBufferException e) {
+                            throw new RuntimeException(e);
+                        }
                     });
 
                     // 处理关闭

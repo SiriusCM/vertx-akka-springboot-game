@@ -1,0 +1,296 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Final Protobuf Test</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 600px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        .container {
+            border: 1px solid #ccc;
+            border-radius: 5px;
+            padding: 20px;
+            margin-bottom: 20px;
+        }
+        .messages {
+            height: 200px;
+            overflow-y: scroll;
+            border: 1px solid #eee;
+            padding: 10px;
+            margin-bottom: 10px;
+            background-color: #f9f9f9;
+        }
+        .message {
+            margin-bottom: 10px;
+            padding: 8px;
+            border-radius: 4px;
+        }
+        .sent {
+            background-color: #e3f2fd;
+            text-align: right;
+        }
+        .received {
+            background-color: #f1f8e9;
+            text-align: left;
+        }
+        input, textarea {
+            width: 100%;
+            padding: 8px;
+            margin-bottom: 10px;
+            box-sizing: border-box;
+        }
+        button {
+            background-color: #4CAF50;
+            color: white;
+            padding: 10px 15px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+        button:hover {
+            background-color: #45a049;
+        }
+        button:disabled {
+            background-color: #cccccc;
+            cursor: not-allowed;
+        }
+        .status {
+            padding: 10px;
+            margin-bottom: 10px;
+            border-radius: 4px;
+        }
+        .connected {
+            background-color: #dff0d8;
+            color: #3c763d;
+        }
+        .disconnected {
+            background-color: #f2dede;
+            color: #a94442;
+        }
+        .message-type {
+            font-weight: bold;
+            color: #007bff;
+        }
+    </style>
+</head>
+<body>
+    <h1>Final Protobuf SMS Test</h1>
+    
+    <div class="status disconnected" id="status">Disconnected</div>
+    
+    <div class="container">
+        <h2>Connection</h2>
+        <button id="connectBtn">Connect</button>
+        <button id="disconnectBtn" disabled>Disconnect</button>
+    </div>
+    
+    <div class="container">
+        <h2>Send SMS</h2>
+        <input type="text" id="from" placeholder="From (Player ID)" value="player1">
+        <input type="text" id="to" placeholder="To (Player ID)" value="player2">
+        <textarea id="message" rows="3" placeholder="Enter your SMS here..."></textarea>
+        <button id="sendBtn" disabled>Send SMS</button>
+    </div>
+    
+    <div class="container">
+        <h2>Messages</h2>
+        <div class="messages" id="messages"></div>
+        <button id="clearBtn">Clear Messages</button>
+    </div>
+
+    <script>
+        // 模拟protobuf消息结构
+        const Message = {
+            Type: {
+                UNKNOWN: 0,
+                SEND_REQUEST: 1,
+                RECEIVE_NOTIFICATION: 2
+            },
+            
+            createSendRequest: function(from, to, content) {
+                return {
+                    type: this.Type.SEND_REQUEST,
+                    payload: {
+                        from: from,
+                        to: to,
+                        content: content,
+                        timestamp: Date.now()
+                    }
+                };
+            },
+            
+            createReceiveNotification: function(from, to, content, originalMessageId) {
+                return {
+                    type: this.Type.RECEIVE_NOTIFICATION,
+                    payload: {
+                        from: from,
+                        to: to,
+                        content: content,
+                        timestamp: Date.now(),
+                        message_id: 'notif-' + Date.now(),
+                        original_message_id: originalMessageId
+                    }
+                };
+            },
+            
+            // 序列化为二进制格式（这里用JSON字符串模拟）
+            serializeBinary: function(obj) {
+                // 在实际应用中，这里应该使用protobuf.js库
+                return new TextEncoder().encode(JSON.stringify(obj));
+            },
+            
+            // 从二进制格式反序列化
+            deserializeBinary: function(bytes) {
+                // 在实际应用中，这里应该使用protobuf.js库
+                try {
+                    return JSON.parse(new TextDecoder().decode(bytes));
+                } catch (e) {
+                    console.error('Failed to parse message:', e);
+                    return null;
+                }
+            }
+        };
+
+        let ws = null;
+        const statusEl = document.getElementById('status');
+        const connectBtn = document.getElementById('connectBtn');
+        const disconnectBtn = document.getElementById('disconnectBtn');
+        const sendBtn = document.getElementById('sendBtn');
+        const messagesEl = document.getElementById('messages');
+        
+        // 连接WebSocket
+        connectBtn.addEventListener('click', () => {
+            ws = new WebSocket('ws://localhost:8081');
+            
+            ws.binaryType = 'arraybuffer'; // 设置接收二进制数据
+            
+            ws.onopen = () => {
+                console.log('Connected to WebSocket');
+                statusEl.textContent = 'Connected';
+                statusEl.className = 'status connected';
+                connectBtn.disabled = true;
+                disconnectBtn.disabled = false;
+                sendBtn.disabled = false;
+            };
+            
+            ws.onmessage = (event) => {
+                console.log('Received binary message, size:', event.data.byteLength, 'bytes');
+                
+                // 处理二进制数据
+                const bytes = new Uint8Array(event.data);
+                
+                // 尝试解析为Message
+                const message = Message.deserializeBinary(bytes);
+                if (message) {
+                    handleMessage(message);
+                } else {
+                    addMessage(`Received binary data (${bytes.length} bytes)`, 'received');
+                }
+            };
+            
+            ws.onclose = () => {
+                console.log('Disconnected from WebSocket');
+                statusEl.textContent = 'Disconnected';
+                statusEl.className = 'status disconnected';
+                connectBtn.disabled = false;
+                disconnectBtn.disabled = true;
+                sendBtn.disabled = true;
+            };
+            
+            ws.onerror = (error) => {
+                console.error('WebSocket error:', error);
+                addMessage('Error: ' + error, 'received');
+            };
+        });
+        
+        // 断开连接
+        disconnectBtn.addEventListener('click', () => {
+            if (ws) {
+                ws.close();
+            }
+        });
+        
+        // 处理接收到的Message
+        function handleMessage(message) {
+            let typeName = '';
+            switch (message.type) {
+                case Message.Type.SEND_REQUEST:
+                    typeName = 'SEND_REQUEST';
+                    break;
+                case Message.Type.RECEIVE_NOTIFICATION:
+                    typeName = 'RECEIVE_NOTIFICATION';
+                    break;
+                default:
+                    typeName = 'UNKNOWN';
+            }
+            
+            if (message.payload.type === 'send_request') {
+                addMessage(`<span class="message-type">[${typeName}]</span> Send Request from ${message.payload.from} to ${message.payload.to}: ${message.payload.content}`, 'received');
+            } else if (message.payload.type === 'receive_notification') {
+                addMessage(`<span class="message-type">[${typeName}]</span> Receive Notification from ${message.payload.from} to ${message.payload.to}: ${message.payload.content}`, 'received');
+            } else {
+                addMessage(`<span class="message-type">[${typeName}]</span> Unknown message type from ${message.payload.from} to ${message.payload.to}`, 'received');
+            }
+        }
+        
+        // 发送消息
+        sendBtn.addEventListener('click', () => {
+            if (!ws || ws.readyState !== WebSocket.OPEN) {
+                alert('Please connect first');
+                return;
+            }
+            
+            const from = document.getElementById('from').value || 'player1';
+            const to = document.getElementById('to').value || 'player2';
+            const content = document.getElementById('message').value;
+            
+            if (!content.trim()) {
+                alert('Please enter a message');
+                return;
+            }
+            
+            // 创建SendMessageRequest
+            const sendRequest = Message.createSendRequest(from, to, content);
+            
+            // 序列化为二进制格式
+            const binaryData = Message.serializeBinary(sendRequest);
+            
+            // 发送二进制消息
+            ws.send(binaryData);
+            
+            // 显示已发送的消息
+            addMessage(`<span class="message-type">[SEND_REQUEST]</span> Sent to ${to}: ${content}`, 'sent');
+            
+            // 清空输入框
+            document.getElementById('message').value = '';
+        });
+        
+        // 添加消息到显示区域
+        function addMessage(text, type) {
+            const messageEl = document.createElement('div');
+            messageEl.className = 'message ' + type;
+            messageEl.innerHTML = `[${new Date().toLocaleTimeString()}] ${text}`;
+            messagesEl.appendChild(messageEl);
+            messagesEl.scrollTop = messagesEl.scrollHeight;
+        }
+        
+        // 清空消息
+        document.getElementById('clearBtn').addEventListener('click', () => {
+            messagesEl.innerHTML = '';
+        });
+        
+        // 允许按Enter键发送消息
+        document.getElementById('message').addEventListener('keypress', (e) => {
+            if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                sendBtn.click();
+            }
+        });
+    </script>
+</body>
+</html>
