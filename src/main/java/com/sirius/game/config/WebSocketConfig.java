@@ -59,6 +59,7 @@ public class WebSocketConfig {
                         actorRef = players.get(playerId);
                     } else {
                         actorRef = actorSystem.systemActorOf(PlayerActor.create(playerId), "player-" + playerId, Props.empty());
+                        players.put(playerId, actorRef);
                     }
 
                     // 处理消息
