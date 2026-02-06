@@ -58,7 +58,7 @@ public class WebSocketConfig {
                     if (players.containsKey(playerId)) {
                         actorRef = players.get(playerId);
                     } else {
-                        actorRef = actorSystem.systemActorOf(PlayerActor.create(playerId), "player-" + playerId, Props.empty());
+                        actorRef = actorSystem.systemActorOf(PlayerActor.create(playerId, webSocket), "player-" + playerId, Props.empty());
                         players.put(playerId, actorRef);
                     }
 
@@ -66,7 +66,6 @@ public class WebSocketConfig {
                     webSocket.handler(buffer -> {
                         String message = buffer.toString();
                         actorRef.tell(new PlayerMessage(playerId, message));
-                        webSocket.writeTextMessage("PlayerActor creation initiated for player: " + message);
                     });
 
                     // 处理关闭
