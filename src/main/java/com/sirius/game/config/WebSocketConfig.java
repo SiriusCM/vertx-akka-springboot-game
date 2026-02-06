@@ -3,9 +3,8 @@ package com.sirius.game.config;
 import akka.actor.typed.ActorRef;
 import akka.actor.typed.ActorSystem;
 import akka.actor.typed.Props;
-import com.sirius.game.actor.GlobalActor;
+import com.sirius.game.actor.RootActor;
 import com.sirius.game.actor.PlayerActor;
-import com.sirius.game.proto.CreatePlayer;
 import com.sirius.game.proto.PlayerMessage;
 import io.vertx.core.Vertx;
 import io.vertx.core.http.HttpServer;
@@ -38,7 +37,7 @@ public class WebSocketConfig {
         log.info("Initializing Akka Actor System");
         try {
             // 使用简化的非集群配置
-            actorSystem = ActorSystem.create(GlobalActor.create(), "GameSystem");
+            actorSystem = ActorSystem.create(RootActor.create(players), "GameSystem");
             log.info("Akka Actor System initialized successfully");
         } catch (Exception e) {
             log.error("Failed to initialize Akka Actor System", e);
