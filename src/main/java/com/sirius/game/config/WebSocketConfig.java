@@ -6,18 +6,22 @@ import akka.actor.typed.ActorSystem;
 import akka.actor.typed.Props;
 import com.sirius.game.actor.PlayerActor;
 import com.sirius.game.actor.RootActor;
+import com.sirius.game.proto.CSLogin;
+import com.sirius.game.proto.GameMessage;
 import io.vertx.core.Vertx;
+import io.vertx.core.buffer.Buffer;
 import io.vertx.core.http.HttpServer;
+import io.vertx.core.http.ServerWebSocket;
 import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
+import lombok.SneakyThrows;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
-import java.util.HashMap;
 import java.util.Map;
-import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
 
 @Slf4j
 @Configuration
@@ -30,44 +34,29 @@ public class WebSocketConfig {
     private HttpServer httpServer;
     private ActorSystem<Object> actorSystem;
 
-    private final Map<String, ActorRef<Object>> players = new HashMap<>();
+    private final Map<String, ActorRef<Object>> players = new ConcurrentHashMap<>();
 
+    @SneakyThrows
     @PostConstruct
     public void init() {
         log.info("Initializing Akka Actor System");
-        try {
-            // 使用简化的非集群配置
-            actorSystem = ActorSystem.create(RootActor.create(players), "GameSystem");
-            log.info("Akka Actor System initialized successfully");
-        } catch (Exception e) {
-            log.error("Failed to initialize Akka Actor System", e);
-            throw new RuntimeException("Akka initialization failed", e);
-        }
+        actorSystem = ActorSystem.create(RootActor.create(players), "GameSystem");
 
         log.info("Initializing Vertx WebSocket server on port {}", websocketPort);
-
         vertx = Vertx.vertx();
         httpServer = vertx.createHttpServer();
 
         httpServer.webSocketHandler(webSocket -> {
-                    String playerId = UUID.randomUUID().toString();
-                    log.info("New WebSocket connection from {} with playerId {}", webSocket.remoteAddress(), playerId);
+                    String[] playerIds = new String[1];
+                    ActorRef<Object>[] actorRefs = new ActorRef[1];
 
-                    ActorRef<Object> actorRef;
-                    if (players.containsKey(playerId)) {
-                        actorRef = players.get(playerId);
-                    } else {
-                        actorRef = actorSystem.systemActorOf(PlayerActor.create(playerId, webSocket), "player-" + playerId, Props.empty());
-                        players.put(playerId, actorRef);
-                    }
-                    webSocket.handler(buffer -> {
-                        actorRef.tell(buffer.getBytes());
-                    });
+                    webSocket.handler(buffer -> dispatch(webSocket, playerIds, actorRefs, buffer));
 
-                    // 处理关闭
                     webSocket.closeHandler(v -> {
-                        actorRef.tell(PoisonPill.getInstance());
-                        log.info("WebSocket closed: {}", playerId);
+                        if (actorRefs[0] != null) {
+                            actorRefs[0].tell(PoisonPill.getInstance());
+                        }
+                        players.remove(playerIds[0]);
                     });
                 })
                 .listen(websocketPort, result -> {
@@ -77,6 +66,28 @@ public class WebSocketConfig {
                         log.error("Failed to start Vertx WebSocket server", result.cause());
                     }
                 });
+    }
+
+    @SneakyThrows
+    private void dispatch(ServerWebSocket webSocket, String[] playerIds, ActorRef<Object>[] actorRefs, Buffer buffer) {
+        GameMessage message = GameMessage.parseFrom(buffer.getBytes());
+        switch (message.getType()) {
+            case CS_LOGIN:
+                CSLogin csLogin = message.getCsLogin();
+                playerIds[0] = csLogin.getUsername();
+                log.info("New WebSocket connection from {} with playerId {}", webSocket.remoteAddress(), playerIds[0]);
+                if (players.containsKey(playerIds[0])) {
+                    actorRefs[0] = players.get(playerIds[0]);
+                } else {
+                    actorRefs[0] = actorSystem.systemActorOf(PlayerActor.create(playerIds[0], webSocket), "player-" + playerIds[0], Props.empty());
+                    players.put(playerIds[0], actorRefs[0]);
+                }
+                actorRefs[0].tell(csLogin);
+                break;
+            case CS_SEND_MESSAGE:
+                actorRefs[0].tell(message.getCsSendMessage());
+                break;
+        }
     }
 
     @PreDestroy

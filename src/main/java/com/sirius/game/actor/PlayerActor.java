@@ -33,8 +33,18 @@ public class PlayerActor extends AbstractBehavior<Object> {
     @Override
     public Receive<Object> createReceive() {
         return newReceiveBuilder()
+                .onMessage(CSLogin.class, this::onMessage)
+                .onMessage(CSSendMessage.class, this::onMessage)
                 .onMessage(byte[].class, this::onMessage)
                 .build();
+    }
+
+    private Behavior<Object> onMessage(CSLogin csLogin) {
+        return handleLoginRequest(csLogin);
+    }
+
+    private Behavior<Object> onMessage(CSSendMessage csSendMessage) {
+        return handleSendMessageRequest(csSendMessage);
     }
 
     private Behavior<Object> onMessage(byte[] data) throws InvalidProtocolBufferException {

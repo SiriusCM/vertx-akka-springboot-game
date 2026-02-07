@@ -5,6 +5,6 @@
 mkdir -p src/main/java
 
 # 使用protoc生成Java类
-protoc --java_out=src/main/java src/main/proto/chat.proto
+protoc --java_out=src/main/java src/main/proto/game.proto
 
 echo "Protobuf Java classes generated successfully!"
