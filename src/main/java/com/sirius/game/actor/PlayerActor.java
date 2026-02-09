@@ -1,11 +1,13 @@
 package com.sirius.game.actor;
 
+import akka.actor.typed.ActorRef;
 import akka.actor.typed.Behavior;
 import akka.actor.typed.javadsl.AbstractBehavior;
 import akka.actor.typed.javadsl.ActorContext;
 import akka.actor.typed.javadsl.Behaviors;
 import akka.actor.typed.javadsl.Receive;
-import com.google.protobuf.InvalidProtocolBufferException;
+import akka.actor.typed.javadsl.Adapter;
+import akka.cluster.Cluster;
 import com.sirius.game.proto.*;
 import io.vertx.core.buffer.Buffer;
 import io.vertx.core.http.ServerWebSocket;
@@ -35,35 +37,11 @@ public class PlayerActor extends AbstractBehavior<Object> {
         return newReceiveBuilder()
                 .onMessage(CSLogin.class, this::onMessage)
                 .onMessage(CSSendMessage.class, this::onMessage)
-                .onMessage(byte[].class, this::onMessage)
+                .onMessage(SCReceiveMessage.class, this::onMessage)
                 .build();
     }
 
     private Behavior<Object> onMessage(CSLogin csLogin) {
-        return handleLoginRequest(csLogin);
-    }
-
-    private Behavior<Object> onMessage(CSSendMessage csSendMessage) {
-        return handleSendMessageRequest(csSendMessage);
-    }
-
-    private Behavior<Object> onMessage(byte[] data) throws InvalidProtocolBufferException {
-        GameMessage message = GameMessage.parseFrom(data);
-        log.info("Player {} received Message: type={}", playerId, message.getType());
-
-        // 根据消息类型处理消息
-        switch (message.getType()) {
-            case CS_LOGIN:
-                return handleLoginRequest(message.getCsLogin());
-            case CS_SEND_MESSAGE:
-                return handleSendMessageRequest(message.getCsSendMessage());
-            default:
-                log.warn("Player {} received unknown message type: {}", playerId, message.getType());
-                return this;
-        }
-    }
-
-    private Behavior<Object> handleLoginRequest(CSLogin csLogin) {
         SCLoginResult scLoginResult = SCLoginResult.newBuilder()
                 .setSuccess(true)
                 .setMessage("")
@@ -81,7 +59,10 @@ public class PlayerActor extends AbstractBehavior<Object> {
         return this;
     }
 
-    private Behavior<Object> handleSendMessageRequest(CSSendMessage csSendMessage) {
+    private Behavior<Object> onMessage(CSSendMessage csSendMessage) {
+        String toPlayerId = csSendMessage.getTo();
+        
+        // 创建接收消息
         SCReceiveMessage scReceiveMessage = SCReceiveMessage.newBuilder()
                 .setFrom(csSendMessage.getFrom())
                 .setTo(csSendMessage.getTo())
@@ -90,12 +71,30 @@ public class PlayerActor extends AbstractBehavior<Object> {
                 .setMessageId(UUID.randomUUID().toString())
                 .build();
 
+        // 使用适配器获取经典ActorSystem，以便使用ActorSelection
+        akka.actor.ActorSystem classicSystem = Adapter.toClassic(getContext().getSystem());
+        
+        // 尝试通过ActorSelection查找目标玩家（跨节点）
+        akka.actor.ActorSelection targetPlayerSelection = classicSystem.actorSelection(
+            "player-" + toPlayerId
+        );
+        
+        // 发送消息给目标玩家
+        targetPlayerSelection.tell(scReceiveMessage, akka.actor.ActorRef.noSender());
+        
+        log.info("Player {} sent message to {}: {}", playerId, toPlayerId, csSendMessage.getContent());
+        return this;
+    }
+    
+    private Behavior<Object> onMessage(SCReceiveMessage scReceiveMessage) {
+        // 收到消息，通过WebSocket发送给客户端
         GameMessage gameMessage = GameMessage.newBuilder()
                 .setType(MessageType.SC_RECEIVE_MESSAGE)
                 .setScReceiveMessage(scReceiveMessage)
                 .build();
 
         webSocket.writeBinaryMessage(Buffer.buffer(gameMessage.toByteArray()));
+        log.info("Player {} received message from {}: {}", playerId, scReceiveMessage.getFrom(), scReceiveMessage.getContent());
         return this;
     }
 }

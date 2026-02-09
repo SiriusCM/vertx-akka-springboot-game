@@ -4,10 +4,13 @@ import akka.actor.PoisonPill;
 import akka.actor.typed.ActorRef;
 import akka.actor.typed.ActorSystem;
 import akka.actor.typed.Props;
+import akka.actor.typed.javadsl.Behaviors;
 import com.sirius.game.actor.PlayerActor;
 import com.sirius.game.actor.RootActor;
 import com.sirius.game.proto.CSLogin;
 import com.sirius.game.proto.GameMessage;
+import com.typesafe.config.Config;
+import com.typesafe.config.ConfigFactory;
 import io.vertx.core.Vertx;
 import io.vertx.core.buffer.Buffer;
 import io.vertx.core.http.HttpServer;
@@ -30,6 +33,9 @@ public class WebSocketConfig {
     @Value("${vertx.websocket.port:8081}")
     private int websocketPort;
 
+    @Value("${akka.cluster.port:10001}")
+    private int akkaClusterPort;
+
     private Vertx vertx;
     private HttpServer httpServer;
     private ActorSystem<Object> actorSystem;
@@ -39,8 +45,17 @@ public class WebSocketConfig {
     @SneakyThrows
     @PostConstruct
     public void init() {
-        log.info("Initializing Akka Actor System");
-        actorSystem = ActorSystem.create(RootActor.create(players), "GameSystem");
+        log.info("Initializing Akka Actor System with cluster port: {}", akkaClusterPort);
+        
+        // 加载配置并设置集群端口
+        Config config = ConfigFactory.load();
+        Config customConfig = ConfigFactory.parseString(
+            "akka.remote.artery.canonical.port = " + akkaClusterPort + "\n" +
+            "akka.cluster.roles = [\"game-node\"]"
+        );
+        Config finalConfig = customConfig.withFallback(config);
+        
+        actorSystem = ActorSystem.create(RootActor.create(players), "GameSystem", finalConfig);
 
         log.info("Initializing Vertx WebSocket server on port {}", websocketPort);
         vertx = Vertx.vertx();

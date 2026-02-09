@@ -9,6 +9,11 @@ spring:
   application:
     name: vertx-akka-springboot-game
 
+akka:
+  cluster:
+    port: 10001 # 默认端口，可以通过-Dakka.cluster.port=xxx覆盖
+    roles: ["game-node"]
+
 logging:
   level:
     com.sirius.game: DEBUG
