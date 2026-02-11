@@ -1,12 +1,10 @@
 package com.sirius.game.config;
 
-import akka.actor.PoisonPill;
-import akka.actor.typed.ActorRef;
 import akka.actor.typed.ActorSystem;
-import akka.actor.typed.Props;
 import akka.actor.typed.javadsl.Behaviors;
-import com.sirius.game.actor.PlayerActor;
-import com.sirius.game.actor.RootActor;
+import akka.cluster.sharding.typed.javadsl.ClusterSharding;
+import akka.cluster.sharding.typed.javadsl.EntityRef;
+import com.sirius.game.actor.PlayerActorSharding;
 import com.sirius.game.proto.CSLogin;
 import com.sirius.game.proto.GameMessage;
 import com.typesafe.config.Config;
@@ -28,7 +26,7 @@ import java.util.concurrent.ConcurrentHashMap;
 
 @Slf4j
 @Configuration
-public class WebSocketConfig {
+public class WebSocketConfigSharding {
 
     @Value("${vertx.websocket.port:8081}")
     private int websocketPort;
@@ -40,22 +38,25 @@ public class WebSocketConfig {
     private HttpServer httpServer;
     private ActorSystem<Object> actorSystem;
 
-    private final Map<String, ActorRef<Object>> players = new ConcurrentHashMap<>();
+    private final Map<String, EntityRef<Object>> players = new ConcurrentHashMap<>();
 
     @SneakyThrows
     @PostConstruct
     public void init() {
         log.info("Initializing Akka Actor System with cluster port: {}", akkaClusterPort);
-        
+
         // 加载配置并设置集群端口
         Config config = ConfigFactory.load();
         Config customConfig = ConfigFactory.parseString(
-            "akka.remote.artery.canonical.port = " + akkaClusterPort + "\n" +
-            "akka.cluster.roles = [\"game-node\"]"
+                "akka.remote.artery.canonical.port = " + akkaClusterPort + "\n" +
+                        "akka.cluster.roles = [\"game-node\"]"
         );
         Config finalConfig = customConfig.withFallback(config);
-        
-        actorSystem = ActorSystem.create(RootActor.create(players), "GameSystem", finalConfig);
+
+        actorSystem = ActorSystem.create(Behaviors.empty(), "GameSystem", finalConfig);
+
+        // 初始化集群分片
+        PlayerActorSharding.initSharding(actorSystem);
 
         log.info("Initializing Vertx WebSocket server on port {}", websocketPort);
         vertx = Vertx.vertx();
@@ -63,13 +64,15 @@ public class WebSocketConfig {
 
         httpServer.webSocketHandler(webSocket -> {
                     String[] playerIds = new String[1];
-                    ActorRef<Object>[] actorRefs = new ActorRef[1];
+                    EntityRef<Object>[] entityRefs = new EntityRef[1];
 
-                    webSocket.handler(buffer -> dispatch(webSocket, playerIds, actorRefs, buffer));
+                    webSocket.handler(buffer -> dispatch(webSocket, playerIds, entityRefs, buffer));
 
                     webSocket.closeHandler(v -> {
-                        if (actorRefs[0] != null) {
-                            actorRefs[0].tell(PoisonPill.getInstance());
+                        if (entityRefs[0] != null) {
+                            // 集群分片中的实体不能直接使用PoisonPill
+                            // 可以通过发送特定消息让实体自行停止
+                            entityRefs[0].tell("stop");
                         }
                         players.remove(playerIds[0]);
                     });
@@ -84,23 +87,27 @@ public class WebSocketConfig {
     }
 
     @SneakyThrows
-    private void dispatch(ServerWebSocket webSocket, String[] playerIds, ActorRef<Object>[] actorRefs, Buffer buffer) {
+    private void dispatch(ServerWebSocket webSocket, String[] playerIds, EntityRef<Object>[] entityRefs, Buffer buffer) {
         GameMessage message = GameMessage.parseFrom(buffer.getBytes());
         switch (message.getType()) {
             case CS_LOGIN:
                 CSLogin csLogin = message.getCsLogin();
                 playerIds[0] = csLogin.getUsername();
                 log.info("New WebSocket connection from {} with playerId {}", webSocket.remoteAddress(), playerIds[0]);
-                if (players.containsKey(playerIds[0])) {
-                    actorRefs[0] = players.get(playerIds[0]);
-                } else {
-                    actorRefs[0] = actorSystem.systemActorOf(PlayerActor.create(playerIds[0], webSocket), "player-" + playerIds[0], Props.empty());
-                    players.put(playerIds[0], actorRefs[0]);
-                }
-                actorRefs[0].tell(csLogin);
+
+                // 获取或创建集群分片实体
+                entityRefs[0] = ClusterSharding.get(actorSystem).entityRefFor(
+                        PlayerActorSharding.PLAYER_TYPE_KEY, playerIds[0]
+                );
+                players.put(playerIds[0], entityRefs[0]);
+
+                // 发送消息给玩家实体
+                entityRefs[0].tell(csLogin);
                 break;
             case CS_SEND_MESSAGE:
-                actorRefs[0].tell(message.getCsSendMessage());
+                if (entityRefs[0] != null) {
+                    entityRefs[0].tell(message.getCsSendMessage());
+                }
                 break;
         }
     }

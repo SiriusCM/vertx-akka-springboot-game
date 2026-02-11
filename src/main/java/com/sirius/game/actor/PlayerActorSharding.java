@@ -1,13 +1,16 @@
 package com.sirius.game.actor;
 
 import akka.actor.typed.ActorRef;
+import akka.actor.typed.ActorSystem;
 import akka.actor.typed.Behavior;
 import akka.actor.typed.javadsl.AbstractBehavior;
 import akka.actor.typed.javadsl.ActorContext;
 import akka.actor.typed.javadsl.Behaviors;
 import akka.actor.typed.javadsl.Receive;
-import akka.actor.typed.javadsl.Adapter;
-import akka.cluster.Cluster;
+import akka.cluster.sharding.typed.javadsl.ClusterSharding;
+import akka.cluster.sharding.typed.javadsl.Entity;
+import akka.cluster.sharding.typed.javadsl.EntityRef;
+import akka.cluster.sharding.typed.javadsl.EntityTypeKey;
 import com.sirius.game.proto.*;
 import io.vertx.core.buffer.Buffer;
 import io.vertx.core.http.ServerWebSocket;
@@ -15,21 +18,30 @@ import lombok.extern.slf4j.Slf4j;
 
 import java.util.UUID;
 
+/**
+ * 支持集群分片的玩家Actor
+ */
 @Slf4j
-public class PlayerActor extends AbstractBehavior<Object> {
+public class PlayerActorSharding extends AbstractBehavior<Object> {
+
+    // 定义分片实体类型键
+    public static final EntityTypeKey<Object> PLAYER_TYPE_KEY = 
+        EntityTypeKey.create(Object.class, "Player");
 
     private final String playerId;
     private final transient ServerWebSocket webSocket;
+    private final ClusterSharding sharding;
 
     public static Behavior<Object> create(String playerId, ServerWebSocket webSocket) {
-        return Behaviors.setup(context -> new PlayerActor(context, playerId, webSocket));
+        return Behaviors.setup(context -> new PlayerActorSharding(context, playerId, webSocket));
     }
 
-    private PlayerActor(ActorContext<Object> context, String playerId, ServerWebSocket webSocket) {
+    private PlayerActorSharding(ActorContext<Object> context, String playerId, ServerWebSocket webSocket) {
         super(context);
         this.playerId = playerId;
         this.webSocket = webSocket;
-        log.info("PlayerActor created for player: {}", playerId);
+        this.sharding = ClusterSharding.get(context.getSystem());
+        log.info("PlayerActorSharding created for player: {}", playerId);
     }
 
     @Override
@@ -71,18 +83,11 @@ public class PlayerActor extends AbstractBehavior<Object> {
                 .setMessageId(UUID.randomUUID().toString())
                 .build();
 
-        // 使用适配器获取经典ActorSystem，以便使用ActorSelection
-        akka.actor.ActorSystem classicSystem = Adapter.toClassic(getContext().getSystem());
+        // 通过集群分片发送消息给目标玩家
+        EntityRef<Object> targetPlayer = sharding.entityRefFor(PLAYER_TYPE_KEY, toPlayerId);
+        targetPlayer.tell(scReceiveMessage);
         
-        // 尝试通过ActorSelection查找目标玩家（跨节点）
-        akka.actor.ActorSelection targetPlayerSelection = classicSystem.actorSelection(
-            "player-" + toPlayerId
-        );
-        
-        // 发送消息给目标玩家
-        targetPlayerSelection.tell(scReceiveMessage, akka.actor.ActorRef.noSender());
-        
-        log.info("Player {} sent message to {}: {}", playerId, toPlayerId, csSendMessage.getContent());
+        log.info("Player {} sent message to {} via cluster sharding: {}", playerId, toPlayerId, csSendMessage.getContent());
         return this;
     }
     
@@ -96,5 +101,17 @@ public class PlayerActor extends AbstractBehavior<Object> {
         webSocket.writeBinaryMessage(Buffer.buffer(gameMessage.toByteArray()));
         log.info("Player {} received message from {}: {}", playerId, scReceiveMessage.getFrom(), scReceiveMessage.getContent());
         return this;
+    }
+
+    /**
+     * 初始化集群分片
+     */
+    public static void initSharding(ActorSystem<Object> actorSystem) {
+        ClusterSharding.get(actorSystem).init(
+            Entity.of(PLAYER_TYPE_KEY, entityContext ->
+                PlayerActorSharding.create(entityContext.getEntityId(), null))
+            .withRole("game-node")
+        );
+        log.info("PlayerActorSharding initialized with cluster sharding");
     }
 }
