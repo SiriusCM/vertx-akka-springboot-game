@@ -4,7 +4,7 @@ import akka.actor.typed.ActorSystem;
 import akka.actor.typed.javadsl.Behaviors;
 import akka.cluster.sharding.typed.javadsl.ClusterSharding;
 import akka.cluster.sharding.typed.javadsl.EntityRef;
-import com.sirius.game.actor.PlayerActorSharding;
+import com.sirius.game.actor.PlayerActor;
 import com.sirius.game.proto.CSLogin;
 import com.sirius.game.proto.GameMessage;
 import com.typesafe.config.Config;
@@ -26,7 +26,7 @@ import java.util.concurrent.ConcurrentHashMap;
 
 @Slf4j
 @Configuration
-public class WebSocketConfigSharding {
+public class WebSocketConfig {
 
     @Value("${vertx.websocket.port:8081}")
     private int websocketPort;
@@ -38,7 +38,8 @@ public class WebSocketConfigSharding {
     private HttpServer httpServer;
     private ActorSystem<Object> actorSystem;
 
-    private final Map<String, EntityRef<Object>> players = new ConcurrentHashMap<>();
+    public static final Map<String, EntityRef<Object>> playerMap = new ConcurrentHashMap<>();
+    public static final Map<String, ServerWebSocket> webSocketMap = new ConcurrentHashMap<>();
 
     @SneakyThrows
     @PostConstruct
@@ -56,7 +57,7 @@ public class WebSocketConfigSharding {
         actorSystem = ActorSystem.create(Behaviors.empty(), "GameSystem", finalConfig);
 
         // 初始化集群分片
-        PlayerActorSharding.initSharding(actorSystem);
+        PlayerActor.initSharding(actorSystem);
 
         log.info("Initializing Vertx WebSocket server on port {}", websocketPort);
         vertx = Vertx.vertx();
@@ -66,7 +67,7 @@ public class WebSocketConfigSharding {
                     String[] playerIds = new String[1];
                     EntityRef<Object>[] entityRefs = new EntityRef[1];
 
-                    webSocket.handler(buffer -> dispatch(webSocket, playerIds, entityRefs, buffer));
+                    webSocket.handler(buffer -> dispatch(playerIds, entityRefs, webSocket, buffer));
 
                     webSocket.closeHandler(v -> {
                         if (entityRefs[0] != null) {
@@ -74,7 +75,8 @@ public class WebSocketConfigSharding {
                             // 可以通过发送特定消息让实体自行停止
                             entityRefs[0].tell("stop");
                         }
-                        players.remove(playerIds[0]);
+                        playerMap.remove(playerIds[0]);
+                        webSocketMap.remove(playerIds[0]);
                     });
                 })
                 .listen(websocketPort, result -> {
@@ -87,19 +89,18 @@ public class WebSocketConfigSharding {
     }
 
     @SneakyThrows
-    private void dispatch(ServerWebSocket webSocket, String[] playerIds, EntityRef<Object>[] entityRefs, Buffer buffer) {
+    private void dispatch(String[] playerIds, EntityRef<Object>[] entityRefs, ServerWebSocket webSocket, Buffer buffer) {
         GameMessage message = GameMessage.parseFrom(buffer.getBytes());
         switch (message.getType()) {
             case CS_LOGIN:
                 CSLogin csLogin = message.getCsLogin();
                 playerIds[0] = csLogin.getUsername();
-                log.info("New WebSocket connection from {} with playerId {}", webSocket.remoteAddress(), playerIds[0]);
-
                 // 获取或创建集群分片实体
                 entityRefs[0] = ClusterSharding.get(actorSystem).entityRefFor(
-                        PlayerActorSharding.PLAYER_TYPE_KEY, playerIds[0]
+                        PlayerActor.PLAYER_TYPE_KEY, playerIds[0]
                 );
-                players.put(playerIds[0], entityRefs[0]);
+                playerMap.put(playerIds[0], entityRefs[0]);
+                webSocketMap.put(playerIds[0], webSocket);
 
                 // 发送消息给玩家实体
                 entityRefs[0].tell(csLogin);
